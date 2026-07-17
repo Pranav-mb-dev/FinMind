@@ -1,0 +1,14 @@
+{
+  "name": "FinMind",
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "postCreateCommand": "pip install -r /workspaces/FinMind/ai-service/requirements.txt --break-system-packages && chmod +x /workspaces/FinMind/backend/mvnw",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "vscjava.vscode-java-pack",
+        "ms-python.python",
+        "pivotal.vscode-spring-boot"
+      ]
+    }
+  }
+}
