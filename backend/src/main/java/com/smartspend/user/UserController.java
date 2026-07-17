@@ -1,5 +1,5 @@
 package com.smartspend.user;
-
+import com.smartspend.common.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -21,7 +21,8 @@ public class UserController {
         String email = authentication.getName();
 
         User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+               // User not found
+            .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
         return ResponseEntity.ok(
                 UserResponse.builder()

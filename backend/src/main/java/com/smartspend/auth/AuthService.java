@@ -5,12 +5,15 @@ import com.smartspend.user.RegisterRequest;
 import com.smartspend.user.User;
 import com.smartspend.user.UserRepository;
 import com.smartspend.user.UserResponse;
+import com.smartspend.common.EmailAlreadyExistsException;
+import com.smartspend.common.InvalidCredentialsException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+
 
 import java.util.Collections;
 
@@ -24,7 +27,8 @@ public class AuthService implements UserDetailsService {
 
     public UserResponse register(RegisterRequest request) {
         if (userRepository.existsByEmail(request.getEmail())) {
-            throw new RuntimeException("Email already exists");
+           throw new EmailAlreadyExistsException("Email already exists");
+
         }
 
         User user = User.builder()
@@ -45,10 +49,10 @@ public class AuthService implements UserDetailsService {
 
     public String login(LoginRequest request) {
         User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new RuntimeException("Invalid Credentials"));
+                .orElseThrow(() -> new InvalidCredentialsException("Invalid credentials"));
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
-            throw new RuntimeException("Invalid Credentials");
+            throw new InvalidCredentialsException("Invalid credentials");
         }
 
         return jwtService.generateToken(user);
