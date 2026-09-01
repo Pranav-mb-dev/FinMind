@@ -1,4 +1,4 @@
-# SmartSpend — AI Context & Project Reference
+# FinMind— AI Context & Project Reference
 
 > **For AI assistants:** This document is the single source of truth for the SmartSpend project. Read this fully before generating any code, answering any architecture question, or making any technical decision. Every decision documented here has already been made and agreed upon — do not suggest alternatives unless explicitly asked.
 
@@ -19,7 +19,7 @@
 
 ## 1. What SmartSpend Is
 
-SmartSpend is an AI-powered personal finance app that lets users understand their financial data through natural conversation. Instead of static dashboards, users ask questions like:
+FinMind is an AI-powered personal finance app that lets users understand their financial data through natural conversation. Instead of static dashboards, users ask questions like:
 
 - *"Where did I overspend in April?"*
 - *"Am I on track for my savings goal?"*
