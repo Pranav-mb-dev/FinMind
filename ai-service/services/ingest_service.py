@@ -13,29 +13,20 @@ from qdrant_client.models import Distance, PointStruct, VectorParams
 from core.config import settings
 
 
-async def process_document(file: UploadFile, user_id: str, document_id: str) -> int:
+async def process_document(file_path: str, user_id: str, document_id: str) -> int:
     """Save an uploaded PDF/DOCX document, index its text chunks into Qdrant, and return chunk count."""
-    if not file.filename:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No filename provided")
-
-    file_extension = Path(file.filename).suffix.lower()
+    file_extension = Path(file_path).suffix.lower()
     if file_extension not in {".pdf", ".docx"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only PDF and DOCX files are supported.",
         )
 
-    temp_file = None
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_handle:
-            content = await file.read()
-            temp_handle.write(content)
-            temp_file = temp_handle.name
-
         if file_extension == ".pdf":
-            loader = PyPDFLoader(temp_file)
+            loader = PyPDFLoader(file_path)
         else:
-            loader = Docx2txtLoader(temp_file)
+            loader = Docx2txtLoader(file_path)
 
         documents = loader.load()
         if not documents:
@@ -83,5 +74,5 @@ async def process_document(file: UploadFile, user_id: str, document_id: str) -> 
 
         return len(chunks)
     finally:
-        if temp_file and os.path.exists(temp_file):
-            os.remove(temp_file)
+        if os.path.exists(file_path):
+            os.remove(file_path)
