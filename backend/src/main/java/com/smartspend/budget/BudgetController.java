@@ -27,7 +27,6 @@ public class BudgetController {
 
     private final BudgetRepository budgetRepository;
     private final UserRepository userRepository;
-/.
     @GetMapping
     public ResponseEntity<List<BudgetResponse>> getBudgets() {
         UUID userId = getCurrentUserId();
