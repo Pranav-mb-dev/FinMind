@@ -8,3 +8,8 @@ celery_app = Celery(
     backend=settings.celery_result_backend,
     include=["app.tasks"],
 )
+
+celery_app.conf.update(
+    task_track_started=True,
+    result_expires=86400,
+)

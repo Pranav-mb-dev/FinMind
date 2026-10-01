@@ -12,7 +12,7 @@
 | **Type** | AI-powered personal finance companion |
 | **Developer** | Pranav — 2nd year CSE student, Google Student Ambassador |
 | **Dev environment** | GitHub Codespaces (Windows PC has no admin rights) |
-| **Current phase** | Phase 2 — Auth & User API (in progress) |
+| **Current phase** | All 6 phases complete |
 | **Package root** | `com.smartspend` |
 
 ---
@@ -92,29 +92,24 @@ Next.js (Frontend)
 
 ## 5. Database Schema
 
-### Current migrations applied:
+### Migrations applied:
 ```
 V1__create_users_table.sql ✅
+V2__update_users_timestamps_and_password_column.sql ✅
+V3__create_categories_table.sql ✅
+V4__create_transactions_table.sql ✅
+V5__create_budgets_table.sql ✅
+V6__create_documents_table.sql ✅
+V7__create_chat_history_table.sql ✅
 ```
 
-### Users table:
-```sql
-CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email VARCHAR(255) NOT NULL UNIQUE,
-    password_hash VARCHAR(255) NOT NULL,
-    full_name VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT now(),
-    updated_at TIMESTAMP NOT NULL DEFAULT now()
-);
-```
-
-### Planned tables (future migrations):
-- `transactions` — financial transactions per user
-- `categories` — transaction classification labels
-- `budgets` — spending limits per category/period
-- `documents` — uploaded file metadata + indexing status
-- `chat_history` — persisted conversation records
+### Tables:
+- `users` — accounts with email, password hash, full name
+- `categories` — system + user-defined transaction categories
+- `transactions` — financial transactions per user (income/expense)
+- `budgets` — spending limits per category/period (weekly/monthly/yearly)
+- `documents` — uploaded file metadata + Celery task tracking + indexing status
+- `chat_messages` — persisted conversation records with session grouping
 
 > **Rule:** Never write a new migration that edits an existing one. Always create a new versioned file (V2, V3...). Flyway checksums every file — editing applied migrations causes startup failure.
 
@@ -122,20 +117,31 @@ CREATE TABLE users (
 
 ## 6. Infrastructure (Docker Compose)
 
-All services run via `docker/docker-compose.yml`.
+All services run via `docker-compose.yml` at the project root. A `docker-compose.override.yml` (git-ignored) can expose the AI service port for local debugging.
 
 ```
-PostgreSQL  → localhost:5432   (finmind DB, finmind_user, finmind_pass)
+PostgreSQL  → localhost:5432   (mydatabase, myuser)
 Redis       → localhost:6379
 Qdrant      → localhost:6333
+Flower      → localhost:5555
+n8n         → localhost:5678
 ```
 
-**Always run this first when opening Codespaces:**
+**Setup:**
 ```bash
-cd /workspaces/FinMind/docker && docker compose up -d
+cp .env.example .env          # then fill in JWT_SECRET and N8N_BASIC_AUTH_PASSWORD
+cp ai-service/.env.example ai-service/.env   # then fill in GEMINI_API_KEY
+docker compose up -d
 ```
 
-Spring Boot will fail to start if Docker containers are not running (Flyway connects to PostgreSQL at startup before the app is ready).
+**Running Spring Boot outside Docker** (e.g. `mvn spring-boot:run`):
+Export `JWT_SECRET` and `SPRING_DATASOURCE_PASSWORD` in your shell first — Spring does not read the root `.env` file. Example:
+```bash
+export JWT_SECRET=your-secret-here
+export SPRING_DATASOURCE_PASSWORD=changeme
+```
+
+Secrets are loaded from a git-ignored `.env` file at the project root (see `.env.example` for required variables). Docker Compose will refuse to start if `JWT_SECRET` or `N8N_BASIC_AUTH_PASSWORD` are missing.
 
 ---
 
@@ -180,7 +186,7 @@ Spring Boot will fail to start if Docker containers are not running (Flyway conn
 
 ---
 
-### 🔄 Phase 2 — Core Backend: Auth & User API (IN PROGRESS)
+### ✅ Phase 2 — Core Backend: Auth & User API (COMPLETE)
 **Deliverable:** Register, login, JWT auth, protected profile endpoint fully working.
 
 **Spec:**
@@ -194,86 +200,93 @@ Spring Boot will fail to start if Docker containers are not running (Flyway conn
 - Missing/expired/malformed JWT → 401
 - Valid token but deleted user → 401
 
-**Implementation layers (in order):**
-1. `User.java` entity ← currently here
+**Implementation layers (all complete):**
+1. `User.java` entity
 2. `UserRepository.java`
 3. DTOs — `RegisterRequest`, `LoginRequest`, `UserResponse`
-4. `JwtService.java`
-5. `AuthService.java`
-6. `SecurityConfig.java`
+4. `JwtService.java` (JJWT 0.12.3, HS256, 24h expiry)
+5. `AuthService.java` (implements `UserDetailsService`)
+6. `SecurityConfig.java` (stateless sessions, CSRF disabled, inline `JwtAuthenticationFilter`)
 7. `AuthController.java`
 8. `UserController.java`
 
-**Current status:** User.java entity written. Package: `com.smartspend.user`. Fixed to use `GenerationType.UUID`. Column name is `password` (not `password_hash`) to match V1 migration.
+**Migrations applied:** V1 creates `users` table. V2 renames `password` → `password_hash` and upgrades timestamps to `TIMESTAMPTZ`.
 
-**Skills to unlock:** Spring Boot REST APIs, JWT authentication, PostgreSQL schema design, Flyway migrations, API design.
+**Custom exceptions:** `EmailAlreadyExistsException` → 409, `InvalidCredentialsException` → 401, `ResourceNotFoundException` → 404, handled by `GlobalExceptionHandler`.
+
+**Skills unlocked:** Spring Boot REST APIs, JWT authentication, PostgreSQL schema design, Flyway migrations, API design.
 
 ---
 
-### ⬜ Phase 3 — RAG Pipeline: Document Ingestion
+### ✅ Phase 3 — RAG Pipeline: Document Ingestion (COMPLETE)
 **Deliverable:** User uploads a bank statement → FastAPI chunks, embeds, stores in Qdrant → chunks are semantically searchable.
 
 **Flow:**
-1. User uploads PDF/CSV via frontend
-2. Spring Boot forwards to FastAPI `/ingest`
-3. LangChain DocumentLoader parses the file
-4. RecursiveCharacterTextSplitter chunks it
-5. Gemini embedding model converts chunks to vectors
-6. Qdrant stores vectors scoped to the user
+1. User uploads PDF/DOCX via `POST /api/v1/ingest` (with `user_id` and `document_id`)
+2. FastAPI validates file type, writes to temp file, dispatches Celery task
+3. LangChain `PyPDFLoader` / `Docx2txtLoader` parses the file
+4. `RecursiveCharacterTextSplitter` chunks it (500 chars, 50 overlap)
+5. Gemini `embedding-001` model converts chunks to 768-dim vectors
+6. Qdrant stores vectors in `finmind_documents` collection, scoped per user/document
 
-> **Deep conceptual coverage required:** What embeddings are, how chunking strategy affects retrieval quality, why vector similarity finds meaning not keywords. Do not skip the concept phase for this.
+**Implementation:**
+- `routers/ingest.py` — upload endpoint, file validation, Celery dispatch
+- `services/ingest_service.py` — load → chunk → embed → upsert pipeline
+- `app/celery_app.py` — Celery instance with Redis broker/backend
+- `app/tasks.py` — async task wrapper
+- `core/config.py` — Pydantic settings for API keys and service URLs
 
-**Skills to unlock:** LangChain, embeddings, vector databases, Qdrant, Gemini embedding API, FastAPI file uploads.
+**Skills unlocked:** LangChain, embeddings, vector databases, Qdrant, Gemini embedding API, FastAPI file uploads, Celery async tasks.
 
 ---
 
-### ⬜ Phase 4 — Async Jobs: Background Processing
+### ✅ Phase 4 — Async Jobs: Background Processing (COMPLETE)
 **Deliverable:** Document upload returns 202 instantly → Celery indexes in background → status updates to "ready".
 
 **Components:**
-- Celery tasks for document indexing
-- Redis as message broker
+- Celery tasks for document indexing (`app/tasks.py`)
+- Redis as message broker (db 1 for broker, db 2 for results)
 - `/ingest/status/{job_id}` polling endpoint
-- APScheduler for nightly re-indexing jobs
-- Flower dashboard for monitoring
+- APScheduler for nightly re-indexing at 2 AM (`app/scheduler.py`)
+- Flower dashboard for monitoring on port 5555
 
-**Skills to unlock:** Celery, Redis broker, APScheduler, async system design.
+**Skills unlocked:** Celery, Redis broker, APScheduler, async system design.
 
 ---
 
-### ⬜ Phase 5 — RAG Chat + AI Agent
+### ✅ Phase 5 — RAG Chat + AI Agent (COMPLETE)
 **Deliverable:** "Ask your finances" chat feature with three progressive stages.
 
-**Stage 1 — Naive RAG:**
-User query → embed → Qdrant retrieval → Gemini generation → answer.
+**Stage 1 — Naive RAG** (`services/rag/naive_rag.py`):
+User query → embed → Qdrant top-5 retrieval → Gemini generation → answer.
 
-**Stage 2 — Advanced RAG:**
-Hybrid search (keyword + semantic), re-ranking, query rewriting for better retrieval accuracy.
+**Stage 2 — Advanced RAG** (`services/rag/advanced_rag.py`):
+Query rewrite → hybrid search (vector + keyword via MatchText) → LLM reranking → answer. Three LLM calls.
 
-**Stage 3 — Agentic RAG:**
-LLM decides whether to search Qdrant or call Spring Boot APIs as MCP tools. Multi-step reasoning. LangChain AgentExecutor.
+**Stage 3 — Agentic RAG** (`services/rag/agent_rag.py`):
+LangChain ReAct agent with 4 tools: `search_documents`, `get_transactions`, `get_transaction_summary`, `get_budgets`. Multi-step reasoning with max 6 iterations.
 
-> **Deep conceptual coverage required at each stage.** Explain Naive RAG fully before Advanced, Advanced fully before Agentic. No skipping.
-
-**Skills to unlock:** LangChain chains + agents, prompt engineering, MCP protocol, LLM tool calling, streaming responses.
+**Skills unlocked:** LangChain chains + agents, prompt engineering, LLM tool calling, ReAct pattern.
 
 ---
 
-### ⬜ Phase 6 — Frontend + Workflow Automation
+### ✅ Phase 6 — Frontend + Workflow Automation (COMPLETE)
 **Deliverable:** Complete Next.js web app + n8n automated workflows.
 
 **Frontend features:**
-- Login/register pages (JWT stored in cookie)
-- Spending dashboard (transactions from PostgreSQL)
-- Document upload UI with real-time status polling
-- Streaming chat interface (token-by-token via Vercel AI SDK)
+- Login/register pages (JWT stored in localStorage)
+- Dashboard with income/expense/balance summary cards + recent transactions
+- Transactions page with CRUD, date filtering, category selection
+- Budgets page with card grid, create/edit/delete
+- Document upload with drag-and-drop and real-time status polling
+- AI chat interface with session management and typing animation
 
 **Automation:**
-- n8n: nightly transaction sync workflow
-- n8n: weekly AI spending summary → email
-- APScheduler: in-app scheduled jobs
+- n8n: nightly health check workflow (`nightly-health-check.json`)
+- n8n: weekly AI spending summary → email (`weekly-spending-summary.json`)
+- APScheduler: nightly reindex at 2 AM (inside ai-service)
 
-**Skills to unlock:** Next.js App Router, streaming chat UI, n8n automation, full-stack integration, system debugging.
+**Skills unlocked:** Next.js App Router, Tailwind CSS, n8n automation, full-stack integration, Docker Compose orchestration.
 
 ---
 
@@ -344,7 +357,7 @@ This project is built as a learning exercise following senior SWE discipline. Th
 | PostgreSQL | 5432 | ✅ Running |
 | Redis | 6379 | ✅ Running |
 | Qdrant | 6333 | ✅ Running |
-| Next.js | 3000 | ⬜ Phase 6 |
+| Next.js | 3000 | ✅ Running |
 
 ---
 
@@ -360,4 +373,4 @@ This project is built as a learning exercise following senior SWE discipline. Th
 
 ---
 
-*Last updated: Phase 2 in progress — User.java entity complete.*
+*Last updated: All 6 phases complete — full-stack app with RAG chat, async jobs, and workflow automation.*

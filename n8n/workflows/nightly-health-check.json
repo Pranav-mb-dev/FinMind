@@ -1,0 +1,204 @@
+{
+  "name": "Nightly Health Check & Reindex Monitor",
+  "nodes": [
+    {
+      "id": "schedule-trigger",
+      "name": "Daily 2 AM Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [200, 300],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 2 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "check-backend",
+      "name": "Check Backend Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [420, 200],
+      "parameters": {
+        "url": "http://backend:8080/health",
+        "method": "GET",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "onError": "continueRegularOutput",
+      "continueOnFail": true
+    },
+    {
+      "id": "check-ai-service",
+      "name": "Check AI Service Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [420, 400],
+      "parameters": {
+        "url": "http://ai-service:8000/health",
+        "method": "GET",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "onError": "continueRegularOutput",
+      "continueOnFail": true
+    },
+    {
+      "id": "merge-results",
+      "name": "Merge Health Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [640, 300],
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition"
+      }
+    },
+    {
+      "id": "check-healthy",
+      "name": "Both Healthy?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [860, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-backend",
+              "leftValue": "={{ $json['Check Backend Health'].status }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "cond-ai",
+              "leftValue": "={{ $json['Check AI Service Health'].status }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "log-success",
+      "name": "Log Success",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [1080, 200],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-status",
+              "name": "status",
+              "value": "All services healthy. APScheduler reindex job is running inside ai-service.",
+              "type": "string"
+            },
+            {
+              "id": "assign-ts",
+              "name": "checked_at",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "alert-unhealthy",
+      "name": "Send Alert (Webhook Placeholder)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1080, 400],
+      "parameters": {
+        "url": "https://your-webhook-url.example.com/alerts",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "=FinMind Health Alert: One or more services are down as of {{ $now.toISO() }}. Check backend (8080) and ai-service (8000)."
+            },
+            {
+              "name": "severity",
+              "value": "critical"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Daily 2 AM Trigger": {
+      "main": [
+        [
+          { "node": "Check Backend Health", "type": "main", "index": 0 },
+          { "node": "Check AI Service Health", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Check Backend Health": {
+      "main": [
+        [
+          { "node": "Merge Health Results", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Check AI Service Health": {
+      "main": [
+        [
+          { "node": "Merge Health Results", "type": "main", "index": 1 }
+        ]
+      ]
+    },
+    "Merge Health Results": {
+      "main": [
+        [
+          { "node": "Both Healthy?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Both Healthy?": {
+      "main": [
+        [
+          { "node": "Log Success", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Send Alert (Webhook Placeholder)", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false,
+  "tags": [
+    { "name": "finmind" },
+    { "name": "monitoring" }
+  ]
+}

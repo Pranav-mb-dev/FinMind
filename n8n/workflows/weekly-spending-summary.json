@@ -1,0 +1,246 @@
+{
+  "name": "Weekly AI Spending Summary",
+  "nodes": [
+    {
+      "id": "schedule-trigger",
+      "name": "Every Monday 8 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [200, 300],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "fetch-summary",
+      "name": "Fetch Transaction Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [420, 300],
+      "parameters": {
+        "url": "http://backend:8080/transactions/summary",
+        "method": "GET",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "startDate",
+              "value": "={{ $now.minus(7, 'days').format('yyyy-MM-dd') }}"
+            },
+            {
+              "name": "endDate",
+              "value": "={{ $now.format('yyyy-MM-dd') }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "FinMind Service Token"
+        }
+      }
+    },
+    {
+      "id": "check-summary",
+      "name": "Has Summary Data?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-has-data",
+              "leftValue": "={{ $json.totalIncome }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ask-ai-summary",
+      "name": "Generate AI Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [860, 200],
+      "parameters": {
+        "url": "http://backend:8080/chat",
+        "method": "POST",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": \"Generate a weekly spending summary report. Here are the numbers for the past 7 days: Total Income: ${{ $('Fetch Transaction Summary').item.json.totalIncome }}, Total Expenses: ${{ $('Fetch Transaction Summary').item.json.totalExpenses }}, Net Balance: ${{ $('Fetch Transaction Summary').item.json.netBalance }}. Provide a brief analysis with key insights and actionable money-saving suggestions. Format it nicely for an email.\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "FinMind Service Token"
+        }
+      }
+    },
+    {
+      "id": "format-email",
+      "name": "Format Email Content",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [1080, 200],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-subject",
+              "name": "subject",
+              "value": "=FinMind Weekly Spending Summary — {{ $now.format('MMM dd, yyyy') }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-body",
+              "name": "body",
+              "value": "={{ $json.content }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-income",
+              "name": "totalIncome",
+              "value": "={{ $('Fetch Transaction Summary').item.json.totalIncome }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-expenses",
+              "name": "totalExpenses",
+              "value": "={{ $('Fetch Transaction Summary').item.json.totalExpenses }}",
+              "type": "string"
+            },
+            {
+              "id": "assign-generated",
+              "name": "generatedAt",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "send-email",
+      "name": "Send Summary Email (SMTP Placeholder)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1300, 200],
+      "parameters": {
+        "fromEmail": "noreply@finmind.app",
+        "toEmail": "=REPLACE_WITH_USER_EMAIL",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}",
+        "options": {}
+      },
+      "credentials": {
+        "smtp": {
+          "id": "REPLACE_WITH_SMTP_CREDENTIAL_ID",
+          "name": "FinMind SMTP"
+        }
+      }
+    },
+    {
+      "id": "no-data-log",
+      "name": "No Data Available",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [860, 400],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "assign-msg",
+              "name": "message",
+              "value": "No transaction data found for the past week. Skipping summary email.",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every Monday 8 AM": {
+      "main": [
+        [
+          { "node": "Fetch Transaction Summary", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Fetch Transaction Summary": {
+      "main": [
+        [
+          { "node": "Has Summary Data?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Has Summary Data?": {
+      "main": [
+        [
+          { "node": "Generate AI Summary", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "No Data Available", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Generate AI Summary": {
+      "main": [
+        [
+          { "node": "Format Email Content", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Format Email Content": {
+      "main": [
+        [
+          { "node": "Send Summary Email (SMTP Placeholder)", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false,
+  "tags": [
+    { "name": "finmind" },
+    { "name": "automation" }
+  ]
+}

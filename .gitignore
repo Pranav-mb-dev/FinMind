@@ -1,2 +1,14 @@
 .env
+ai-service/.env
+frontend/.env
 __pycache__/
+docker-compose.override.yml
+
+# Backend build artifacts
+backend/target_classes/
+backend/target_test-classes/
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
