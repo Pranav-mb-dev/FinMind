@@ -1,376 +1,334 @@
-# FinMind— AI Context & Project Reference
+<div align="center">
 
-> **For AI assistants:** This document is the single source of truth for the SmartSpend project. Read this fully before generating any code, answering any architecture question, or making any technical decision. Every decision documented here has already been made and agreed upon — do not suggest alternatives unless explicitly asked.
+# FinMind
+
+**An AI-powered personal finance companion.**
+Track spending, set budgets, upload bank statements, and ask questions about your money in plain English.
+
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-34--100--249--2.sslip.io-2ea44f?style=for-the-badge)](https://34-100-249-2.sslip.io)
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Java](https://img.shields.io/badge/Java-21-orange)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5-6DB33F)
+![Next.js](https://img.shields.io/badge/Next.js-14-black)
+![FastAPI](https://img.shields.io/badge/FastAPI-Python-009688)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED)
+
+</div>
 
 ---
 
-## 0. Quick Identity
+## 🚀 Try it out
 
-| Field | Value |
+**👉 https://34-100-249-2.sslip.io**
+
+1. Open the link and **register** a new account (any email works, no verification).
+2. Add a few **transactions** and a **budget** from the dashboard.
+3. Upload a bank statement (PDF or DOCX) on the **Documents** page and wait for its status to become *READY*.
+4. Open **Chat** and ask things like:
+   - *"What did I spend the most on this month?"*
+   - *"Am I over budget anywhere?"*
+   - *"What does my uploaded statement say about subscriptions?"*
+
+> The demo is a shared public instance. Don't upload real financial documents.
+
+---
+
+## Why FinMind
+
+Most finance apps give you static charts. FinMind lets you ask questions instead. It retrieves your actual transactions, budgets and uploaded documents, then has Gemini answer using that data (Retrieval-Augmented Generation), so answers are grounded in your numbers rather than generic advice.
+
+## Features
+
+| Area | What you get |
 |---|---|
-| **Project name** | SmartSpend (will rename to FinMind on ship) |
-| **Type** | AI-powered personal finance companion |
-| **Developer** | Pranav — 2nd year CSE student, Google Student Ambassador |
-| **Dev environment** | GitHub Codespaces (Windows PC has no admin rights) |
-| **Current phase** | All 6 phases complete |
-| **Package root** | `com.smartspend` |
+| **Auth** | Register/login, BCrypt-hashed passwords, stateless JWT (24h expiry) |
+| **Transactions** | Income/expense CRUD, date filtering, categories, summary totals |
+| **Budgets** | Weekly / monthly / yearly limits per category |
+| **Documents** | PDF/DOCX upload, async chunking + embedding, live indexing status |
+| **AI chat** | Persistent chat sessions with three selectable RAG strategies |
+| **Background jobs** | Celery workers (with Flower monitoring), nightly re-index at 02:00 |
+| **Deployment** | One-command Docker Compose stack, automatic HTTPS through Caddy |
 
----
-
-## 1. What SmartSpend Is
-
-FinMind is an AI-powered personal finance app that lets users understand their financial data through natural conversation. Instead of static dashboards, users ask questions like:
-
-- *"Where did I overspend in April?"*
-- *"Am I on track for my savings goal?"*
-- *"What's my biggest recurring expense?"*
-
-The system retrieves the user's actual transaction history and uploaded documents from a vector database, injects that context into a prompt, and generates a grounded answer using Gemini. This is RAG — Retrieval-Augmented Generation.
-
----
-
-## 2. Architecture Pattern
-
-**Modular Monolith + Sidecar**
+## Architecture
 
 ```
-Spring Boot (Modular Monolith)
-├── user/         ← domain: auth, profile
-├── transaction/  ← domain: financial transactions
-├── budget/       ← domain: spending limits
-└── auth/         ← domain: JWT, security config
-
-FastAPI (Python Sidecar) ← language-forced, NOT microservices
-└── RAG pipeline, LangChain, MCP tool-calling
-
-Next.js (Frontend)
-└── UI, chat interface, dashboard
+                  ┌──────────────────────────────┐
+   Browser ─────▶ │  Caddy  (HTTPS, :80 / :443)  │
+                  │   /api/*  → backend:8080     │
+                  │   /*      → frontend:3000    │
+                  └───────────────┬──────────────┘
+                                  │
+        Next.js 14 ◀──────────────┤
+                                  ▼
+          Spring Boot 3.5 (Java 21) ───▶ PostgreSQL 16   (Flyway migrations)
+          auth · users · transactions     Redis 7
+          budgets · categories
+          documents · chat
+                                  │ HTTP
+                                  ▼
+          FastAPI (Python) ───▶ Qdrant   (vector store)
+          ingestion · RAG       Gemini   (LLM + embeddings)
+                                  ▲
+          Celery worker ──────────┘  (Redis broker)   Flower (monitoring)
 ```
 
-**Why not microservices?** FastAPI exists only because LangChain is Python and cannot run inside the Java runtime. This is a language constraint, not an architectural philosophy. Spring Boot + FastAPI together is a monolith + sidecar pattern — one main unit, one attached helper.
+**Design choices**
 
-**Why modular monolith?** Each domain (user, transaction, budget) is a self-contained package with its own entity, repository, service, and controller. One deployable JAR, clean internal package boundaries. The `transaction` package never directly calls `budget`'s repository — it goes through the service layer.
+- **Modular monolith + sidecar.** Spring Boot is the single deployable core, organised by domain package (`user`, `transaction`, `budget`, `category`, `document`, `chat`). FastAPI exists only because LangChain is Python; it is an attached helper, not a microservice split.
+- **Flyway owns the schema** (`ddl-auto=validate`). Migrations are append-only.
+- **UUID primary keys** to avoid enumerable IDs.
+- **Stateless JWT auth** so the backend scales horizontally without shared sessions.
+- **Per-user vector isolation.** Every Qdrant query is filtered by `user_id`.
+- **Single public entry point.** Only Caddy listens publicly; the AI service, databases and brokers stay on the internal Docker network.
 
----
+### RAG strategies
 
-## 3. Full Technology Stack
-
-| Layer | Technology | Why |
+| Mode | Pipeline | Best for |
 |---|---|---|
-| Core backend | Spring Boot 3.5.0 (Java 21, Maven) | Main monolith — auth, business logic, API gateway |
-| AI service | FastAPI (Python 3.12) | LangChain requires Python |
-| LLM | Gemini API | Generation + embeddings |
-| RAG orchestration | LangChain | Chains, retrievers, agents |
-| Agent tool protocol | MCP (Model Context Protocol) | LLM calls Spring Boot APIs as tools |
-| Relational DB | PostgreSQL 16 | Users, transactions, budgets, chat history |
-| Schema migrations | Flyway | Version-controlled schema changes |
-| Vector DB | Qdrant | Document embeddings, semantic search |
-| Cache + broker | Redis | Caching + Celery message queue |
-| Async tasks | Celery + APScheduler | Background document indexing, scheduled jobs |
-| Workflow automation | n8n | External integrations, notifications |
-| Frontend | Next.js (App Router) | Dashboard, chat UI, document upload |
-| Auth | JWT + BCrypt | Stateless tokens, hashed passwords |
-| Containerization | Docker Compose | Local dev environment |
+| `naive` | Embed query → Qdrant similarity search (top 5) → Gemini | Fast, simple document questions |
+| `advanced` | Hybrid vector + keyword search (top 10 each) → LLM re-ranking → Gemini | Higher-precision retrieval |
+| `agent` | Tool-calling agent (max 6 steps) using `search_documents`, `get_transactions`, `get_transaction_summary`, `get_budgets` | Questions mixing documents and live account data |
+
+Ingestion: PDF/DOCX → `RecursiveCharacterTextSplitter` (500-char chunks, 50 overlap) → Gemini embeddings (768 dimensions) → Qdrant.
+
+## Project metrics
+
+Measured from the repository (source files only, excluding dependencies).
+
+| Metric | Value |
+|---|---|
+| Backend (Java) | 43 files, ~1,850 lines |
+| AI service (Python) | 19 files, ~1,030 lines |
+| Frontend (TypeScript/React) | 14 files, ~1,670 lines |
+| Database migrations | 8 (6 domain tables) |
+| REST endpoints (Spring Boot) | 23 across 7 controllers |
+| AI service endpoints | 4 (`/ingest`, `/ingest/status/{id}`, `/chat`, `/health`) |
+| RAG strategies | 3 |
+| Agent tools | 4 |
+| Containers in the stack | 10 (Postgres, Redis, Qdrant, backend, AI service, Celery worker, Flower, frontend, n8n, Caddy) |
+| Automated checks | 16 scripted end-to-end checks (`tests/e2e.sh`), 18 AI-service unit tests |
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | Next.js 14 (App Router), React 18, TypeScript, Tailwind CSS |
+| Core backend | Spring Boot 3.5, Java 21, Maven, Spring Security, JPA, JJWT |
+| AI service | FastAPI, LangChain, Google Gemini |
+| Data | PostgreSQL 16, Qdrant 1.13, Redis 7 |
+| Async | Celery, Flower, APScheduler |
+| Infra | Docker Compose, Caddy 2 (automatic HTTPS) |
+| Automation (optional) | n8n workflow templates |
 
 ---
 
-## 4. Key Architectural Decisions (DO NOT CHANGE)
+## Getting started
 
-| Decision | Choice | Reason |
-|---|---|---|
-| ID type | UUID | Unpredictable, globally unique, prevents enumeration attacks |
-| ID generation | `GenerationType.UUID` | Explicit, predictable — never use AUTO |
-| DDL strategy | `ddl-auto=validate` | Flyway owns schema, Hibernate only validates |
-| Password storage | BCrypt hash | Never store plaintext passwords |
-| Auth mechanism | Stateless JWT | Scales horizontally without shared session storage |
-| Schema changes | Flyway migration files | Never alter production DB manually |
-| Timestamp management | `@PrePersist` / `@PreUpdate` | Entity manages its own timestamps automatically |
-| Equality check | `@EqualsAndHashCode(onlyExplicitlyIncluded = true)` on UUID only | Avoid comparing mutable fields |
-| Package structure | Domain-based (`com.smartspend.user`, `com.smartspend.transaction`) | Enforces modular monolith boundaries |
+### Prerequisites
 
----
+- [Docker](https://docs.docker.com/get-docker/) with Docker Compose v2
+- A [Gemini API key](https://aistudio.google.com/apikey)
+- About 4 GB of free RAM for the full stack
 
-## 5. Database Schema
+### 1. Clone
 
-### Migrations applied:
-```
-V1__create_users_table.sql ✅
-V2__update_users_timestamps_and_password_column.sql ✅
-V3__create_categories_table.sql ✅
-V4__create_transactions_table.sql ✅
-V5__create_budgets_table.sql ✅
-V6__create_documents_table.sql ✅
-V7__create_chat_history_table.sql ✅
-```
-
-### Tables:
-- `users` — accounts with email, password hash, full name
-- `categories` — system + user-defined transaction categories
-- `transactions` — financial transactions per user (income/expense)
-- `budgets` — spending limits per category/period (weekly/monthly/yearly)
-- `documents` — uploaded file metadata + Celery task tracking + indexing status
-- `chat_messages` — persisted conversation records with session grouping
-
-> **Rule:** Never write a new migration that edits an existing one. Always create a new versioned file (V2, V3...). Flyway checksums every file — editing applied migrations causes startup failure.
-
----
-
-## 6. Infrastructure (Docker Compose)
-
-All services run via `docker-compose.yml` at the project root. A `docker-compose.override.yml` (git-ignored) can expose the AI service port for local debugging.
-
-```
-PostgreSQL  → localhost:5432   (mydatabase, myuser)
-Redis       → localhost:6379
-Qdrant      → localhost:6333
-Flower      → localhost:5555
-n8n         → localhost:5678
-```
-
-**Setup:**
 ```bash
-cp .env.example .env          # then fill in JWT_SECRET and N8N_BASIC_AUTH_PASSWORD
-cp ai-service/.env.example ai-service/.env   # then fill in GEMINI_API_KEY
-docker compose up -d
+git clone <your-repo-url> FinMind
+cd FinMind
 ```
 
-**Running Spring Boot outside Docker** (e.g. `mvn spring-boot:run`):
-Export `JWT_SECRET` and `SPRING_DATASOURCE_PASSWORD` in your shell first — Spring does not read the root `.env` file. Example:
+### 2. Configure environment
+
 ```bash
-export JWT_SECRET=your-secret-here
-export SPRING_DATASOURCE_PASSWORD=changeme
+cp .env.example .env
+cp ai-service/.env.example ai-service/.env
 ```
 
-Secrets are loaded from a git-ignored `.env` file at the project root (see `.env.example` for required variables). Docker Compose will refuse to start if `JWT_SECRET` or `N8N_BASIC_AUTH_PASSWORD` are missing.
+Edit **`.env`**:
 
----
+| Variable | Description |
+|---|---|
+| `PUBLIC_URL` | Public base URL, e.g. `http://localhost` (local) or `https://your-domain` |
+| `POSTGRES_PASSWORD` | Database password (required) |
+| `JWT_SECRET` | Random signing secret, at least 32 characters (required). Generate with `openssl rand -base64 48` |
+| `CORS_ORIGINS` | Allowed browser origin(s); normally the same as `PUBLIC_URL` |
 
-## 7. Project Folder Structure
+Edit **`ai-service/.env`**:
 
-```
-/workspaces/FinMind/
-├── backend/
-│   ├── src/main/java/com/smartspend/
-│   │   ├── user/       → User entity, UserRepository, UserService, UserController
-│   │   ├── auth/       → JwtService, AuthService, AuthController, SecurityConfig
-│   │   ├── transaction/  → (Phase 3+)
-│   │   └── budget/       → (Phase 3+)
-│   ├── src/main/resources/
-│   │   ├── application.properties
-│   │   └── db/migration/   → Flyway SQL files
-│   └── pom.xml
-├── ai-service/         → FastAPI Python AI service (HTTP, language-forced separation)
-│   ├── main.py
-│   ├── routers/
-│   ├── services/
-│   ├── core/
-│   └── requirements.txt
-├── frontend/           → Next.js (Phase 6)
-└── docker/
-    └── docker-compose.yml
-```
+| Variable | Description |
+|---|---|
+| `GEMINI_API_KEY` | Your Gemini API key (required) |
+| `GEMINI_MODEL` | Generation model (see `.env.example` for the default; change it if your key has no access) |
+| `EMBEDDING_MODEL` / `EMBEDDING_DIMENSIONS` | Embedding model and vector size (default 768) |
 
----
+Docker Compose refuses to start if a required variable is missing.
 
-## 8. Development Phases
+### 3. Choose your hostname
 
-### ✅ Phase 1 — Project Setup & Dev Environment (COMPLETE)
-**Deliverable:** All services running, first migration applied.
-- Docker Compose: PostgreSQL, Redis, Qdrant all healthy
-- Spring Boot bootstrapped and connected to PostgreSQL
-- Flyway ran V1 migration — users table created
-- FastAPI bootstrapped with `/health` endpoint on port 8000
-- Redis and Qdrant verified reachable
+`Caddyfile` currently serves `34-100-249-2.sslip.io`. Change that first line:
 
-**Skills unlocked:** Docker Compose, Spring Boot setup, FastAPI basics, Flyway migrations, project structure thinking.
+- **Local:** replace it with `localhost` (or use `:80`), and set `PUBLIC_URL=http://localhost` and `CORS_ORIGINS=http://localhost` in `.env`.
+- **Your own server:** use your domain (or `<ip-with-dashes>.sslip.io`), open ports 80 and 443, and Caddy fetches a Let's Encrypt certificate automatically.
 
----
+### 4. Start
 
-### ✅ Phase 2 — Core Backend: Auth & User API (COMPLETE)
-**Deliverable:** Register, login, JWT auth, protected profile endpoint fully working.
-
-**Spec:**
-- `POST /auth/register` — email + password + fullName → BCrypt hash → save → 201
-- `POST /auth/login` — verify credentials → return signed JWT (24h expiry)
-- `GET /users/me` — JWT protected → return user profile
-
-**Edge cases:**
-- Duplicate email → 409 Conflict
-- Wrong credentials → 401 (same message for wrong email OR wrong password — never leak which)
-- Missing/expired/malformed JWT → 401
-- Valid token but deleted user → 401
-
-**Implementation layers (all complete):**
-1. `User.java` entity
-2. `UserRepository.java`
-3. DTOs — `RegisterRequest`, `LoginRequest`, `UserResponse`
-4. `JwtService.java` (JJWT 0.12.3, HS256, 24h expiry)
-5. `AuthService.java` (implements `UserDetailsService`)
-6. `SecurityConfig.java` (stateless sessions, CSRF disabled, inline `JwtAuthenticationFilter`)
-7. `AuthController.java`
-8. `UserController.java`
-
-**Migrations applied:** V1 creates `users` table. V2 renames `password` → `password_hash` and upgrades timestamps to `TIMESTAMPTZ`.
-
-**Custom exceptions:** `EmailAlreadyExistsException` → 409, `InvalidCredentialsException` → 401, `ResourceNotFoundException` → 404, handled by `GlobalExceptionHandler`.
-
-**Skills unlocked:** Spring Boot REST APIs, JWT authentication, PostgreSQL schema design, Flyway migrations, API design.
-
----
-
-### ✅ Phase 3 — RAG Pipeline: Document Ingestion (COMPLETE)
-**Deliverable:** User uploads a bank statement → FastAPI chunks, embeds, stores in Qdrant → chunks are semantically searchable.
-
-**Flow:**
-1. User uploads PDF/DOCX via `POST /api/v1/ingest` (with `user_id` and `document_id`)
-2. FastAPI validates file type, writes to temp file, dispatches Celery task
-3. LangChain `PyPDFLoader` / `Docx2txtLoader` parses the file
-4. `RecursiveCharacterTextSplitter` chunks it (500 chars, 50 overlap)
-5. Gemini `embedding-001` model converts chunks to 768-dim vectors
-6. Qdrant stores vectors in `finmind_documents` collection, scoped per user/document
-
-**Implementation:**
-- `routers/ingest.py` — upload endpoint, file validation, Celery dispatch
-- `services/ingest_service.py` — load → chunk → embed → upsert pipeline
-- `app/celery_app.py` — Celery instance with Redis broker/backend
-- `app/tasks.py` — async task wrapper
-- `core/config.py` — Pydantic settings for API keys and service URLs
-
-**Skills unlocked:** LangChain, embeddings, vector databases, Qdrant, Gemini embedding API, FastAPI file uploads, Celery async tasks.
-
----
-
-### ✅ Phase 4 — Async Jobs: Background Processing (COMPLETE)
-**Deliverable:** Document upload returns 202 instantly → Celery indexes in background → status updates to "ready".
-
-**Components:**
-- Celery tasks for document indexing (`app/tasks.py`)
-- Redis as message broker (db 1 for broker, db 2 for results)
-- `/ingest/status/{job_id}` polling endpoint
-- APScheduler for nightly re-indexing at 2 AM (`app/scheduler.py`)
-- Flower dashboard for monitoring on port 5555
-
-**Skills unlocked:** Celery, Redis broker, APScheduler, async system design.
-
----
-
-### ✅ Phase 5 — RAG Chat + AI Agent (COMPLETE)
-**Deliverable:** "Ask your finances" chat feature with three progressive stages.
-
-**Stage 1 — Naive RAG** (`services/rag/naive_rag.py`):
-User query → embed → Qdrant top-5 retrieval → Gemini generation → answer.
-
-**Stage 2 — Advanced RAG** (`services/rag/advanced_rag.py`):
-Query rewrite → hybrid search (vector + keyword via MatchText) → LLM reranking → answer. Three LLM calls.
-
-**Stage 3 — Agentic RAG** (`services/rag/agent_rag.py`):
-LangChain ReAct agent with 4 tools: `search_documents`, `get_transactions`, `get_transaction_summary`, `get_budgets`. Multi-step reasoning with max 6 iterations.
-
-**Skills unlocked:** LangChain chains + agents, prompt engineering, LLM tool calling, ReAct pattern.
-
----
-
-### ✅ Phase 6 — Frontend + Workflow Automation (COMPLETE)
-**Deliverable:** Complete Next.js web app + n8n automated workflows.
-
-**Frontend features:**
-- Login/register pages (JWT stored in localStorage)
-- Dashboard with income/expense/balance summary cards + recent transactions
-- Transactions page with CRUD, date filtering, category selection
-- Budgets page with card grid, create/edit/delete
-- Document upload with drag-and-drop and real-time status polling
-- AI chat interface with session management and typing animation
-
-**Automation:**
-- n8n: nightly health check workflow (`nightly-health-check.json`)
-- n8n: weekly AI spending summary → email (`weekly-spending-summary.json`)
-- APScheduler: nightly reindex at 2 AM (inside ai-service)
-
-**Skills unlocked:** Next.js App Router, Tailwind CSS, n8n automation, full-stack integration, Docker Compose orchestration.
-
----
-
-## 9. RAG System Overview
-
-SmartSpend's AI is built in three escalating stages:
-
-```
-Stage 1 — Naive RAG
-User query → embed query → Qdrant similarity search
-→ retrieve top-K chunks → inject into prompt → Gemini answers
-
-Stage 2 — Advanced RAG
-Same as above + hybrid search (BM25 + vector)
-+ re-ranking retrieved results
-+ query rewriting for better retrieval
-
-Stage 3 — Agentic RAG
-LLM reasons about what to do:
-"Should I search Qdrant or call get_transactions() API?"
-→ calls tools via MCP → combines results → answers
+```bash
+docker compose up -d --build
 ```
 
----
+First build takes a few minutes. Check status:
 
-## 10. Learning Methodology (Enforce Strictly)
+```bash
+docker compose ps
+docker compose logs -f backend ai-service
+```
 
-This project is built as a learning exercise following senior SWE discipline. The AI assistant must enforce these rules every session:
+### 5. Use it
 
-1. **SKETCH FIRST** — Ask Pranav to explain what should happen before generating any code. Wait for the answer.
-2. **SMALL PIECES ONLY** — One layer at a time: entity → repository → DTO → service → controller. Never generate a full feature in one shot.
-3. **GUESS BEFORE EXPLAIN** — Show a new annotation/pattern, ask Pranav to guess what it does before explaining. Correct precisely: what's right, what's fuzzy, what's wrong.
-4. **END-OF-FEATURE TRACE** — After each feature, Pranav must trace the full request from HTTP input to response from memory. Call it out if skipped. Do not continue until done.
-5. **BREAK IT** — After each feature works, prompt Pranav to test at least one deliberate failure case and explain why that failure happens.
-6. **REBUILD FROM MEMORY** — Pranav rewrites one small part himself with no AI after understanding it.
-7. **NEVER HAND ANSWERS EARLY** — If Pranav asks to just generate something, remind him of the methodology. Exception: pure boilerplate with zero learning value.
-8. **INTERROGATE THE CODE** — When Pranav pastes AI-generated code, cross-examine him line by line like a senior engineer in a code review. He must defend every annotation and decision.
-9. **ANALOGIES FIRST** — Pranav learns best with analogies before technical depth. Always lead with an analogy when introducing a new concept.
-10. **PHASE WRAP-UP** — After completing each phase: concept revision summary + mock interview (one question at a time, correct answers precisely).
+| What | Where |
+|---|---|
+| App | `PUBLIC_URL` (e.g. http://localhost) |
+| Flower (Celery monitor) | http://127.0.0.1:5555 (localhost only) |
+| n8n | http://127.0.0.1:5678 (localhost only) |
 
----
+On a remote server, reach Flower and n8n through an SSH tunnel, e.g. `ssh -L 5555:127.0.0.1:5555 user@server`.
 
-## 11. Concepts Already Covered (Do Not Re-explain)
+### Stop / reset
 
-- Docker vs Docker Compose
-- Monolith vs microservices vs modular monolith + sidecar
-- PostgreSQL Driver vs Spring Data JPA
-- Flyway — how migrations work locally and in production
-- `ddl-auto=validate` vs `update`
-- Lombok — `@Data`, `@Builder`, `@NoArgsConstructor`, `@AllArgsConstructor`, `@Getter`, `@Setter`
-- `@Entity`, `@Table`, `@Id`, `@GeneratedValue`, `@Column`
-- `@PrePersist`, `@PreUpdate` — JPA lifecycle hooks
-- `@EqualsAndHashCode(onlyExplicitlyIncluded = true)` — UUID-only equality
-- JWT authentication — wristband analogy, header/payload/signature, stateless vs sessions
-- UUID vs integer ID — security reasoning
-- `GenerationType.UUID` vs `AUTO`
-- BCrypt password hashing
-- DTO — what it is and why it's different from an entity
+```bash
+docker compose down        # stop, keep data
+docker compose down -v     # stop and delete all data (database, vectors, uploads)
+```
+
+### Updating a deployment
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+Flyway applies new migrations on backend start-up.
 
 ---
 
-## 12. Ports Reference
+## Local development (without Docker for the apps)
 
-| Service | Port | Status |
-|---|---|---|
-| Spring Boot | 8080 | ✅ Running |
-| FastAPI | 8000 | ✅ Running |
-| PostgreSQL | 5432 | ✅ Running |
-| Redis | 6379 | ✅ Running |
-| Qdrant | 6333 | ✅ Running |
-| Next.js | 3000 | ✅ Running |
+Start only the infrastructure, then run each app from source:
 
----
+```bash
+docker compose up -d postgres redis qdrant
+```
 
-## 13. Courses Being Followed
+> The compose file doesn't publish database ports. For local app development add a `docker-compose.override.yml` exposing `5432`, `6379` and `6333`.
 
-| When | Course | Platform | Cost |
-|---|---|---|---|
-| Phase 3 starts | LangChain: Chat With Your Data | DeepLearning.AI | Free |
-| Phase 3 ends | Retrieval Augmented Generation | DeepLearning.AI | Free |
-| Phase 5 starts | Functions, Tools & Agents with LangChain | DeepLearning.AI | Free |
-| Phase 5 ends | LangChain Academy Essentials | LangChain Academy | Free |
-| After ship | Ultimate RAG Bootcamp | Udemy | ~₹499 |
+**Backend** (Spring does not read the root `.env`; export variables first):
 
----
+```bash
+export JWT_SECRET=<32+ char secret>
+export SPRING_DATASOURCE_PASSWORD=<same as POSTGRES_PASSWORD>
+cd backend && ./mvnw spring-boot:run          # http://localhost:8080
+```
 
-*Last updated: All 6 phases complete — full-stack app with RAG chat, async jobs, and workflow automation.*
+**AI service:**
+
+```bash
+cd ai-service
+pip install -r requirements.txt
+uvicorn main:app --port 8000                  # http://localhost:8000
+celery -A app.celery_app worker --loglevel=info
+```
+
+**Frontend:**
+
+```bash
+cd frontend
+npm install
+npm run dev                                   # http://localhost:3000
+```
+
+Set `NEXT_PUBLIC_API_URL` in `frontend/.env` to point at the backend.
+
+## API reference
+
+Backend routes are served under `/api` in the Docker deployment. Everything except `/auth/*` and `/health` requires `Authorization: Bearer <jwt>`.
+
+| Area | Endpoints |
+|---|---|
+| Auth | `POST /auth/register` · `POST /auth/login` |
+| User | `GET /users/me` |
+| Transactions | `GET /transactions` · `POST /transactions` · `GET /transactions/summary` · `DELETE /transactions/{id}` |
+| Categories | `GET /categories` · `POST /categories` · `DELETE /categories/{id}` |
+| Budgets | `GET /budgets` · `POST /budgets` · `PUT /budgets/{id}` · `DELETE /budgets/{id}` |
+| Documents | `GET /documents` · `POST /documents/upload` · `GET /documents/{id}/status` |
+| Chat | `POST /chat` · `GET /chat/sessions` · `GET /chat/sessions/{sessionId}` |
+| Health | `GET /health` |
+
+Example:
+
+```bash
+BASE=https://34-100-249-2.sslip.io/api
+
+curl -X POST $BASE/auth/register -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"testpass1","fullName":"You"}'
+
+TOKEN=$(curl -s -X POST $BASE/auth/login -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"testpass1"}')   # login returns the raw JWT string
+
+curl $BASE/users/me -H "Authorization: Bearer $TOKEN"
+```
+
+Error semantics: duplicate email → `409`; wrong credentials → `401` (same message for wrong email or password); missing/expired JWT → `401`; unknown resource → `404`.
+
+## Testing
+
+```bash
+bash tests/e2e.sh              # end-to-end API checks against a running stack
+cd ai-service && pytest tests  # AI-service unit tests
+cd backend && ./mvnw test      # backend tests
+```
+
+`tests/e2e.sh` expects the backend on `localhost:8080` and the AI service on `localhost:8000` (use the override file above), and uses fixtures in `tests/fixtures/`.
+
+## Project structure
+
+```
+FinMind/
+├── backend/            Spring Boot app
+│   └── src/main/
+│       ├── java/com/smartspend/   auth, user, transaction, budget, category, document, chat, common
+│       └── resources/db/migration/  Flyway V1–V8
+├── ai-service/         FastAPI + Celery
+│   ├── routers/        /api/v1/ingest, /api/v1/chat
+│   ├── services/       ingestion, re-indexing, rag/{naive,advanced,agent}_rag.py
+│   └── app/            Celery app, tasks, nightly scheduler
+├── frontend/           Next.js app (auth + dashboard route groups)
+├── n8n/workflows/      Optional workflow templates (see below)
+├── tests/              e2e.sh + fixtures
+├── Caddyfile           HTTPS reverse proxy
+└── docker-compose.yml
+```
+
+## Security notes
+
+- Passwords hashed with BCrypt; JWTs signed with a secret from the environment.
+- Secrets live in git-ignored `.env` files. Never commit them.
+- Only ports 80/443 are public; Flower and n8n bind to `127.0.0.1`.
+- Vector queries are scoped per user.
+- Use a strong `JWT_SECRET` and `POSTGRES_PASSWORD` in any real deployment.
+
+## Automation (optional, work in progress)
+
+- **Nightly re-index** runs inside the AI service (APScheduler, 02:00) and is active by default.
+- **n8n** is included in the stack, with two workflow templates in `n8n/workflows/` (nightly health check, weekly AI spending summary). They are **templates**: import them through the n8n UI and fill in the placeholders (alert webhook, SMTP credentials, recipient, auth token) before activating. They are not wired up out of the box.
+
+## Roadmap
+
+- Production-ready n8n workflows (service authentication, real alert/email targets)
+- Bank-statement CSV import
+- Spending trend charts on the dashboard
+- Automated CI pipeline
+
+## License
+
+Released under the [MIT License](LICENSE). © 2026 Pranav Bhargav M.
