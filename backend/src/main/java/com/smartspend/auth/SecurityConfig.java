@@ -37,6 +37,9 @@ public class SecurityConfig {
     @org.springframework.beans.factory.annotation.Value("${cors.allowed-origins:http://localhost:3000}")
     private String allowedOrigins;
 
+    @org.springframework.beans.factory.annotation.Value("${n8n.service-token:}")
+    private String serviceToken;
+
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
@@ -58,8 +61,10 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.POST, "/auth/register", "/auth/login").permitAll()
                         .requestMatchers(HttpMethod.GET, "/health").permitAll()
+                        .requestMatchers("/internal/**").hasRole(ServiceTokenFilter.ROLE)
                         .anyRequest().authenticated()
                 )
+                .addFilterBefore(new ServiceTokenFilter(serviceToken), UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

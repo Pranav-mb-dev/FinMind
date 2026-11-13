@@ -1,5 +1,6 @@
 package com.smartspend.transaction;
 
+import com.smartspend.alert.AlertService;
 import com.smartspend.common.ResourceNotFoundException;
 import com.smartspend.user.User;
 import com.smartspend.user.UserRepository;
@@ -30,6 +31,15 @@ public class TransactionController {
 
     private final TransactionRepository transactionRepository;
     private final UserRepository userRepository;
+    private final TransactionAnalyticsService analyticsService;
+    private final AlertService alertService;
+
+    @GetMapping("/by-category")
+    public ResponseEntity<CategoryAnalyticsResponse> getByCategory(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(analyticsService.byCategory(getCurrentUserId(), from, to));
+    }
 
     @GetMapping
     public ResponseEntity<List<TransactionResponse>> getTransactions(
@@ -59,6 +69,7 @@ public class TransactionController {
                 .transactionDate(request.getTransactionDate())
                 .build();
         Transaction saved = transactionRepository.save(transaction);
+        alertService.evaluateAfterChange(userId);
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(saved));
     }
 

@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -27,6 +28,13 @@ public class BudgetController {
 
     private final BudgetRepository budgetRepository;
     private final UserRepository userRepository;
+    private final BudgetStatusService budgetStatusService;
+
+    @GetMapping("/status")
+    public ResponseEntity<List<BudgetStatusResponse>> getBudgetStatus() {
+        return ResponseEntity.ok(budgetStatusService.statusFor(getCurrentUserId(), LocalDate.now()));
+    }
+
     @GetMapping
     public ResponseEntity<List<BudgetResponse>> getBudgets() {
         UUID userId = getCurrentUserId();

@@ -55,10 +55,15 @@ async def get_ingest_status(task_id: str):
     elif result.state == "STARTED":
         return {"task_id": task_id, "status": "processing"}
     elif result.state == "SUCCESS":
+        data = result.result
+        if not isinstance(data, dict):
+            data = {"chunks_indexed": data, "transactions": [], "extraction_error": None}
         return {
             "task_id": task_id,
             "status": "ready",
-            "chunks_indexed": result.result,
+            "chunks_indexed": data.get("chunks_indexed"),
+            "transactions": data.get("transactions", []),
+            "extraction_error": data.get("extraction_error"),
         }
     elif result.state == "FAILURE":
         return {

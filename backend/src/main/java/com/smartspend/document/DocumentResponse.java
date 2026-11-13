@@ -21,5 +21,6 @@ public class DocumentResponse {
     private String status;
     private Integer chunksIndexed;
     private String errorMessage;
+    private int pendingTransactionCount;
     private Instant createdAt;
 }

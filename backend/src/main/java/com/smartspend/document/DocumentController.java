@@ -1,11 +1,15 @@
 package com.smartspend.document;
 
 import com.smartspend.common.ResourceNotFoundException;
+import com.smartspend.transaction.PendingTransactionRepository;
+import com.smartspend.transaction.PendingTransactionService;
 import com.smartspend.user.User;
 import com.smartspend.user.UserRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -31,11 +35,17 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/documents")
 @RequiredArgsConstructor
+@Slf4j
 public class DocumentController {
+
+    static final String EXTRACTION_SAVE_FAILED_MESSAGE =
+            "Transactions were extracted but could not be saved. Please re-upload the statement.";
 
     private final DocumentRepository documentRepository;
     private final UserRepository userRepository;
     private final RestTemplate restTemplate;
+    private final PendingTransactionService pendingTransactionService;
+    private final PendingTransactionRepository pendingTransactionRepository;
 
     @Value("${ai.service.url}")
     private String aiServiceUrl;
@@ -128,6 +138,7 @@ public class DocumentController {
                         if (chunks instanceof Number) {
                             document.setChunksIndexed(((Number) chunks).intValue());
                         }
+                        applyExtraction(document, userId, statusResponse);
                         documentRepository.save(document);
                     } else if ("failed".equals(taskStatus)) {
                         document.setStatus("FAILED");
@@ -145,6 +156,32 @@ public class DocumentController {
         return ResponseEntity.ok(toResponse(document));
     }
 
+    @SuppressWarnings("unchecked")
+    private void applyExtraction(Document document, UUID userId, Map<String, Object> statusResponse) {
+        Object extractionError = statusResponse.get("extraction_error");
+        if (extractionError instanceof String err && !err.isBlank()) {
+            document.setErrorMessage(truncate(err));
+            return;
+        }
+        Object tx = statusResponse.get("transactions");
+        if (!(tx instanceof List<?> list) || list.isEmpty()) {
+            return;
+        }
+        try {
+            pendingTransactionService.saveExtracted(userId, document.getId(), (List<Map<String, Object>>) list);
+        } catch (DataIntegrityViolationException e) {
+            // a concurrent poll already saved the rows
+        } catch (Exception e) {
+            // Internal (SQL/constraint) details are logged, never shown to the user.
+            log.error("Saving extracted transactions failed for document {}", document.getId(), e);
+            document.setErrorMessage(EXTRACTION_SAVE_FAILED_MESSAGE);
+        }
+    }
+
+    private static String truncate(String s) {
+        return s.length() > 500 ? s.substring(0, 500) : s;
+    }
+
     private UUID getCurrentUserId() {
         String email = SecurityContextHolder.getContext().getAuthentication().getName();
         User user = userRepository.findByEmail(email)
@@ -160,6 +197,7 @@ public class DocumentController {
                 .status(d.getStatus())
                 .chunksIndexed(d.getChunksIndexed())
                 .errorMessage(d.getErrorMessage())
+                .pendingTransactionCount((int) pendingTransactionRepository.countByDocumentId(d.getId()))
                 .createdAt(d.getCreatedAt())
                 .build();
     }

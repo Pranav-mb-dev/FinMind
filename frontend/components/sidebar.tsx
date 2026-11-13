@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import ThemeToggle from '@/components/theme-toggle';
+import AlertBell from '@/components/AlertBell';
 
 const navItems = [
   {
@@ -59,9 +60,12 @@ export default function Sidebar() {
 
   return (
     <aside className="fixed inset-y-0 left-0 w-64 bg-gray-900 dark:bg-gray-950 dark:border-r dark:border-gray-800 text-white flex flex-col">
-      <div className="px-6 py-5 border-b border-gray-800">
-        <h1 className="text-xl font-bold tracking-tight">FinMind</h1>
-        <p className="text-xs text-gray-400 mt-0.5">Personal Finance AI</p>
+      <div className="px-6 py-5 border-b border-gray-800 flex items-start justify-between">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight">FinMind</h1>
+          <p className="text-xs text-gray-400 mt-0.5">Personal Finance AI</p>
+        </div>
+        <AlertBell />
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-1">

@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -9,10 +10,15 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
 from core.config import settings
+from services.extraction_service import extract_transactions
+
+logger = logging.getLogger(__name__)
+
+EXTRACTION_FAILED_MESSAGE = "Transaction extraction failed; document text was still indexed."
 
 
-async def process_document(file_path: str, user_id: str, document_id: str) -> int:
-    """Save an uploaded PDF/DOCX document, index its text chunks into Qdrant, and return chunk count."""
+async def process_document(file_path: str, user_id: str, document_id: str) -> dict:
+    """Save an uploaded PDF/DOCX document, index its text chunks into Qdrant, and extract transactions. Returns a dict."""
     try:
         file_extension = Path(file_path).suffix.lower()
         if file_extension not in {".pdf", ".docx"}:
@@ -46,7 +52,7 @@ async def process_document(file_path: str, user_id: str, document_id: str) -> in
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
         chunks = text_splitter.split_text(combined_text)
         if not chunks:
-            return 0
+            return {"chunks_indexed": 0, "transactions": [], "extraction_error": None}
 
         embeddings = GoogleGenerativeAIEmbeddings(
             model=settings.embedding_model,
@@ -80,7 +86,30 @@ async def process_document(file_path: str, user_id: str, document_id: str) -> in
 
         client.upsert(collection_name=collection_name, points=points)
 
-        return len(chunks)
+        transactions = []
+        extraction_error = None
+        try:
+            rows = await extract_transactions(combined_text)
+            transactions = [
+                {
+                    "date": r.date.isoformat(),
+                    "amount": float(r.amount),
+                    "type": r.type,
+                    "description": r.description,
+                    "suggested_category": r.suggested_category,
+                }
+                for r in rows
+            ]
+        except Exception:
+            # Raw Gemini/langchain error text may contain internal details; log it, return a safe message.
+            logger.exception("Transaction extraction failed for document %s", document_id)
+            extraction_error = EXTRACTION_FAILED_MESSAGE
+
+        return {
+            "chunks_indexed": len(chunks),
+            "transactions": transactions,
+            "extraction_error": extraction_error,
+        }
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)

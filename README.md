@@ -44,7 +44,9 @@ Most finance apps give you static charts. FinMind lets you ask questions instead
 |---|---|
 | **Auth** | Register/login, BCrypt-hashed passwords, stateless JWT (24h expiry) |
 | **Transactions** | Income/expense CRUD, date filtering, categories, summary totals |
-| **Budgets** | Weekly / monthly / yearly limits per category |
+| **Budgets** | Weekly / monthly / yearly limits per category, with live progress (spent, remaining, % used) |
+| **Insights** | Spending by category vs the previous period, top merchants, detected monthly subscriptions and price hikes |
+| **Alerts** | In-app bell when a budget reaches 80% / 100% or a new subscription or price hike appears; optional push to n8n |
 | **Documents** | PDF/DOCX upload, async chunking + embedding, live indexing status |
 | **AI chat** | Persistent chat sessions with three selectable RAG strategies |
 | **Background jobs** | Celery workers (with Flower monitoring), nightly re-index at 02:00 |
@@ -88,7 +90,7 @@ Most finance apps give you static charts. FinMind lets you ask questions instead
 |---|---|---|
 | `naive` | Embed query → Qdrant similarity search (top 5) → Gemini | Fast, simple document questions |
 | `advanced` | Hybrid vector + keyword search (top 10 each) → LLM re-ranking → Gemini | Higher-precision retrieval |
-| `agent` | Tool-calling agent (max 6 steps) using `search_documents`, `get_transactions`, `get_transaction_summary`, `get_budgets` | Questions mixing documents and live account data |
+| `agent` (default) | Router: one structured Gemini call picks the needed sources (`documents`, `transactions`, `summary`, `budgets`) and a date range → sources fetched concurrently in code → one Gemini answer call. At most 2 LLM calls per question | Questions mixing documents and live account data |
 
 Ingestion: PDF/DOCX → `RecursiveCharacterTextSplitter` (500-char chunks, 50 overlap) → Gemini embeddings (768 dimensions) → Qdrant.
 
@@ -105,9 +107,9 @@ Measured from the repository (source files only, excluding dependencies).
 | REST endpoints (Spring Boot) | 23 across 7 controllers |
 | AI service endpoints | 4 (`/ingest`, `/ingest/status/{id}`, `/chat`, `/health`) |
 | RAG strategies | 3 |
-| Agent tools | 4 |
+| Agent data sources | 4 |
 | Containers in the stack | 10 (Postgres, Redis, Qdrant, backend, AI service, Celery worker, Flower, frontend, n8n, Caddy) |
-| Automated checks | 16 scripted end-to-end checks (`tests/e2e.sh`), 18 AI-service unit tests |
+| Automated checks | 16 scripted end-to-end checks (`tests/e2e.sh`), 31 AI-service unit tests |
 
 ## Tech stack
 
@@ -257,9 +259,12 @@ Backend routes are served under `/api` in the Docker deployment. Everything exce
 |---|---|
 | Auth | `POST /auth/register` · `POST /auth/login` |
 | User | `GET /users/me` |
-| Transactions | `GET /transactions` · `POST /transactions` · `GET /transactions/summary` · `DELETE /transactions/{id}` |
+| Transactions | `GET /transactions` · `POST /transactions` · `GET /transactions/summary` · `GET /transactions/by-category?from=&to=` · `DELETE /transactions/{id}` |
 | Categories | `GET /categories` · `POST /categories` · `DELETE /categories/{id}` |
-| Budgets | `GET /budgets` · `POST /budgets` · `PUT /budgets/{id}` · `DELETE /budgets/{id}` |
+| Budgets | `GET /budgets` · `GET /budgets/status` · `POST /budgets` · `PUT /budgets/{id}` · `DELETE /budgets/{id}` |
+| Recurring | `GET /recurring` |
+| Alerts | `GET /alerts` · `POST /alerts/{id}/read` · `POST /alerts/read-all` |
+| Internal (n8n only) | `POST /internal/recurring/scan` with header `X-Service-Token` (blocked at Caddy, reachable only on the Docker network) |
 | Documents | `GET /documents` · `POST /documents/upload` · `GET /documents/{id}/status` |
 | Chat | `POST /chat` · `GET /chat/sessions` · `GET /chat/sessions/{sessionId}` |
 | Health | `GET /health` |
@@ -296,8 +301,8 @@ cd backend && ./mvnw test      # backend tests
 FinMind/
 ├── backend/            Spring Boot app
 │   └── src/main/
-│       ├── java/com/smartspend/   auth, user, transaction, budget, category, document, chat, common
-│       └── resources/db/migration/  Flyway V1–V8
+│       ├── java/com/smartspend/   auth, user, transaction, budget, category, document, chat, recurring, alert, common
+│       └── resources/db/migration/  Flyway V1–V10
 ├── ai-service/         FastAPI + Celery
 │   ├── routers/        /api/v1/ingest, /api/v1/chat
 │   ├── services/       ingestion, re-indexing, rag/{naive,advanced,agent}_rag.py
@@ -320,11 +325,30 @@ FinMind/
 ## Automation (optional, work in progress)
 
 - **Nightly re-index** runs inside the AI service (APScheduler, 02:00) and is active by default.
-- **n8n** is included in the stack, with two workflow templates in `n8n/workflows/` (nightly health check, weekly AI spending summary). They are **templates**: import them through the n8n UI and fill in the placeholders (alert webhook, SMTP credentials, recipient, auth token) before activating. They are not wired up out of the box.
+- **n8n** is included in the stack, with two older workflow templates in `n8n/workflows/` (nightly health check, weekly AI spending summary). They are **templates**: import them through the n8n UI and fill in the placeholders (alert webhook, SMTP credentials, recipient, auth token) before activating. They are not wired up out of the box.
+
+### Alerts and n8n
+
+Alerts work without n8n: the backend writes them and the bell in the sidebar shows them. n8n adds delivery and a nightly scan. Two workflows in `n8n/workflows/` are ready to import (they import as inactive):
+
+| Workflow | What it does |
+|---|---|
+| `alert-fanout.json` | Receives a webhook for every new alert. Critical alerts go to the user by email, warnings and info to a Slack channel. |
+| `nightly-recurring-scan.json` | At 02:30 calls `POST /internal/recurring/scan`, which looks for new subscriptions and price hikes across all users. |
+
+Setup:
+
+1. In `.env` set `N8N_SERVICE_TOKEN` to a long random string (e.g. `openssl rand -hex 32`). Leave it empty and the scan endpoint is disabled.
+2. In n8n (http://127.0.0.1:5678) import both files and activate **Alert fan-out**. Copy its **production** webhook URL into `.env` as `N8N_ALERT_WEBHOOK_URL`, normally `http://n8n:5678/webhook/finmind-alerts`.
+3. In **Alert fan-out**, the Email and Slack nodes ship **disabled**. Attach your SMTP / Slack credentials, set the From address or channel, and enable the ones you use.
+4. Activate **Nightly recurring-charge scan**, then `docker compose up -d` to apply the new env vars.
+
+The webhook call is best effort: a slow or failing n8n never blocks a transaction or loses the in-app alert. The alert payload includes the user's email address so n8n can address the email, so only point `N8N_ALERT_WEBHOOK_URL` at an n8n you control. The workflows read the token with `$env`, which is why compose sets `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`; everyone who can edit workflows in your n8n can read its environment variables.
 
 ## Roadmap
 
-- Production-ready n8n workflows (service authentication, real alert/email targets)
+- Weekly/monthly AI-written "where to cut" savings report in n8n
+- Statement intake by email through n8n
 - Bank-statement CSV import
 - Spending trend charts on the dashboard
 - Automated CI pipeline

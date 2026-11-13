@@ -20,6 +20,22 @@ interface Category {
   isSystem: boolean;
 }
 
+interface BudgetStatus {
+  budgetId: string;
+  spent: number;
+  remaining: number;
+  percentUsed: number;
+  status: 'OK' | 'WARNING' | 'EXCEEDED';
+  windowStart: string;
+  windowEnd: string;
+}
+
+const statusStyles: Record<BudgetStatus['status'], { bar: string; text: string; label: string }> = {
+  OK: { bar: 'bg-indigo-500', text: 'text-gray-600', label: 'On track' },
+  WARNING: { bar: 'bg-amber-500', text: 'text-amber-600', label: 'Nearly used up' },
+  EXCEEDED: { bar: 'bg-red-500', text: 'text-red-600', label: 'Over budget' },
+};
+
 function formatCurrency(n: number): string {
   return '$' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
@@ -40,6 +56,17 @@ export default function BudgetsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
+  const [statuses, setStatuses] = useState<Record<string, BudgetStatus>>({});
+
+  // Progress is a nice-to-have: if it fails the budget cards still render without a bar.
+  async function refreshStatuses() {
+    try {
+      const list = await apiJson<BudgetStatus[]>('/budgets/status');
+      setStatuses(Object.fromEntries(list.map(s => [s.budgetId, s])));
+    } catch {
+      setStatuses({});
+    }
+  }
 
   useEffect(() => {
     async function load() {
@@ -50,6 +77,7 @@ export default function BudgetsPage() {
         ]);
         setBudgets(b);
         setCategories(c);
+        await refreshStatuses();
       } catch (e: any) {
         setError(e.message || 'Failed to load');
       } finally {
@@ -99,6 +127,7 @@ export default function BudgetsPage() {
         await apiJson('/budgets', { method: 'POST', body });
       }
       setBudgets(await apiJson<Budget[]>('/budgets'));
+      await refreshStatuses();
       setShowForm(false);
       setEditingId(null);
       setForm(EMPTY_FORM);
@@ -240,6 +269,40 @@ export default function BudgetsPage() {
                 </span>
               </div>
               <p className="text-2xl font-bold text-indigo-600 mb-3">{formatCurrency(b.amount)}</p>
+              {statuses[b.id] && (() => {
+                const s = statuses[b.id];
+                const style = statusStyles[s.status];
+                return (
+                  <div className="mb-3">
+                    <div
+                      className="h-2 bg-gray-200 rounded-full overflow-hidden"
+                      role="progressbar"
+                      aria-valuenow={Math.min(100, Math.round(s.percentUsed))}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label={`${s.percentUsed}% of budget used`}
+                    >
+                      <div
+                        className={`h-full rounded-full ${style.bar}`}
+                        style={{ width: `${Math.min(100, s.percentUsed)}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between mt-1.5 text-xs">
+                      <span className={`font-medium ${style.text}`}>
+                        {formatCurrency(s.spent)} spent · {s.percentUsed}%
+                      </span>
+                      <span className={style.text}>
+                        {s.remaining >= 0
+                          ? `${formatCurrency(s.remaining)} left`
+                          : `${formatCurrency(-s.remaining)} over`}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {style.label} · {s.windowStart} to {s.windowEnd}
+                    </p>
+                  </div>
+                );
+              })()}
               <p className="text-sm text-gray-500 mb-4">{b.startDate} to {b.endDate}</p>
               <div className="flex gap-2">
                 <button

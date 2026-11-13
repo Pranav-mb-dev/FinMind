@@ -21,6 +21,38 @@ interface Transaction {
   createdAt: string;
 }
 
+interface CategorySpend {
+  categoryId: string | null;
+  name: string;
+  total: number;
+  previousTotal: number;
+  changePercent: number | null;
+  sharePercent: number;
+}
+
+interface CategoryAnalytics {
+  totalExpenses: number;
+  previousTotalExpenses: number;
+  changePercent: number | null;
+  categories: CategorySpend[];
+}
+
+interface RecurringCharge {
+  key: string;
+  description: string;
+  amount: number;
+  yearlyCost: number;
+  nextExpected: string;
+  priceHike: boolean;
+}
+
+function ChangeBadge({ pct }: { pct: number | null }) {
+  if (pct === null) return <span className="text-xs text-gray-400">new</span>;
+  // For spending, up is bad (red) and down is good (green).
+  const color = pct > 0 ? 'text-red-600' : pct < 0 ? 'text-green-600' : 'text-gray-400';
+  return <span className={`text-xs font-medium ${color}`}>{pct > 0 ? '+' : ''}{pct}%</span>;
+}
+
 function formatCurrency(n: number): string {
   return '$' + Math.abs(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
@@ -35,6 +67,8 @@ function toLocalDate(d: Date): string {
 export default function DashboardPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [analytics, setAnalytics] = useState<CategoryAnalytics | null>(null);
+  const [recurring, setRecurring] = useState<RecurringCharge[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -45,12 +79,17 @@ export default function DashboardPage() {
         const startDate = toLocalDate(new Date(now.getFullYear(), now.getMonth(), 1));
         const endDate = toLocalDate(now);
 
-        const [sum, txns] = await Promise.all([
+        // Insights are optional: a failure there must not break the core dashboard.
+        const [sum, txns, cats, subs] = await Promise.all([
           apiJson<Summary>(`/transactions/summary?startDate=${startDate}&endDate=${endDate}`),
           apiJson<Transaction[]>('/transactions'),
+          apiJson<CategoryAnalytics>(`/transactions/by-category?from=${startDate}&to=${endDate}`).catch(() => null),
+          apiJson<RecurringCharge[]>('/recurring').catch(() => [] as RecurringCharge[]),
         ]);
         setSummary(sum);
         setTransactions(txns.slice(0, 5));
+        setAnalytics(cats);
+        setRecurring(subs);
       } catch (e: any) {
         setError(e.message || 'Failed to load dashboard');
       } finally {
@@ -110,6 +149,73 @@ export default function DashboardPage() {
             </p>
           </div>
         ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <div className="bg-white rounded-lg shadow-sm">
+          <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-gray-900">Spending by Category</h2>
+            {analytics && analytics.totalExpenses > 0 && (
+              <span className="text-xs text-gray-500">
+                vs previous period <ChangeBadge pct={analytics.changePercent} />
+              </span>
+            )}
+          </div>
+          {!analytics || analytics.categories.length === 0 ? (
+            <div className="p-6 text-center text-gray-500 text-sm">No expenses this month yet.</div>
+          ) : (
+            <ul className="p-6 space-y-4">
+              {analytics.categories.slice(0, 6).map(c => (
+                <li key={c.categoryId ?? 'none'}>
+                  <div className="flex items-center justify-between text-sm mb-1">
+                    <span className="text-gray-800">{c.name}</span>
+                    <span className="text-gray-600">
+                      {formatCurrency(c.total)} <ChangeBadge pct={c.changePercent} />
+                    </span>
+                  </div>
+                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${Math.min(100, c.sharePercent)}%` }} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="bg-white rounded-lg shadow-sm">
+          <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-gray-900">Subscriptions</h2>
+            {recurring.length > 0 && (
+              <span className="text-xs text-gray-500">
+                {formatCurrency(recurring.reduce((t, r) => t + r.yearlyCost, 0))} / year
+              </span>
+            )}
+          </div>
+          {recurring.length === 0 ? (
+            <div className="p-6 text-center text-gray-500 text-sm">
+              No recurring charges detected yet. We look for the same charge about once a month, at least three times.
+            </div>
+          ) : (
+            <ul className="divide-y divide-gray-50">
+              {recurring.slice(0, 6).map(r => (
+                <li key={r.key} className="px-6 py-3 flex items-center justify-between">
+                  <div className="min-w-0">
+                    <p className="text-sm text-gray-900 truncate">{r.description}</p>
+                    <p className="text-xs text-gray-400">next around {r.nextExpected}</p>
+                  </div>
+                  <div className="text-right shrink-0 ml-4">
+                    <p className="text-sm font-medium text-gray-900">{formatCurrency(r.amount)}/mo</p>
+                    {r.priceHike ? (
+                      <p className="text-xs font-medium text-amber-600">price went up</p>
+                    ) : (
+                      <p className="text-xs text-gray-400">{formatCurrency(r.yearlyCost)}/yr</p>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
 
       <div className="bg-white rounded-lg shadow-sm">

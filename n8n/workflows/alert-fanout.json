@@ -1,0 +1,118 @@
+{
+  "name": "FinMind - Alert fan-out",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "finmind-alerts",
+        "options": {}
+      },
+      "id": "5b0f1c1e-7c1a-4b52-9d51-0a1a6f1e0001",
+      "name": "Alert webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "finmind-alerts"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "9a1d3f52-0b0e-4a4f-8a36-1f0f6d3a0001",
+              "leftValue": "={{ $json.body.severity }}",
+              "rightValue": "CRITICAL",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "5b0f1c1e-7c1a-4b52-9d51-0a1a6f1e0002",
+      "name": "Is critical?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "fromEmail": "finmind@example.com",
+        "toEmail": "={{ $('Alert webhook').item.json.body.userEmail }}",
+        "subject": "={{ 'FinMind alert: ' + $('Alert webhook').item.json.body.type }}",
+        "emailFormat": "text",
+        "text": "={{ $('Alert webhook').item.json.body.message }}",
+        "options": {}
+      },
+      "id": "5b0f1c1e-7c1a-4b52-9d51-0a1a6f1e0003",
+      "name": "Email the user (critical)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [500, -100],
+      "disabled": true,
+      "notes": "Disabled until you attach SMTP credentials and set a real From address, then enable."
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "finmind-alerts",
+          "mode": "name"
+        },
+        "text": "={{ ':' + ($('Alert webhook').item.json.body.severity === 'WARNING' ? 'warning' : 'information_source') + ': ' + $('Alert webhook').item.json.body.message }}",
+        "otherOptions": {}
+      },
+      "id": "5b0f1c1e-7c1a-4b52-9d51-0a1a6f1e0004",
+      "name": "Post to Slack (warning / info)",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [500, 100],
+      "disabled": true,
+      "notes": "Disabled until you attach Slack credentials and pick a channel, then enable."
+    }
+  ],
+  "connections": {
+    "Alert webhook": {
+      "main": [
+        [
+          {
+            "node": "Is critical?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is critical?": {
+      "main": [
+        [
+          {
+            "node": "Email the user (critical)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Post to Slack (warning / info)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

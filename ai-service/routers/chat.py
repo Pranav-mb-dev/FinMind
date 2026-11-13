@@ -16,7 +16,7 @@ class ChatRequest(BaseModel):
     user_id: str
     session_id: str | None = None
     message: str
-    mode: str = Field(default="naive")
+    mode: str = Field(default="agent")
 
 
 class ChatResponse(BaseModel):

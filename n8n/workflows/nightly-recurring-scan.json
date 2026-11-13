@@ -1,0 +1,66 @@
+{
+  "name": "FinMind - Nightly recurring-charge scan",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 2 * * *"
+            }
+          ]
+        }
+      },
+      "id": "7c2e2d2f-8d2b-4c63-8e62-1b2b7a2f0001",
+      "name": "Every night at 02:30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.FINMIND_BACKEND_URL + '/internal/recurring/scan' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Service-Token",
+              "value": "={{ $env.N8N_SERVICE_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "7c2e2d2f-8d2b-4c63-8e62-1b2b7a2f0002",
+      "name": "Scan for recurring charges",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 0],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 30000,
+      "notes": "Calls the backend on the Docker network. Returns {\"alertsCreated\": N}; new alerts then reach the Alert fan-out workflow through the backend's webhook."
+    }
+  ],
+  "connections": {
+    "Every night at 02:30": {
+      "main": [
+        [
+          {
+            "node": "Scan for recurring charges",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

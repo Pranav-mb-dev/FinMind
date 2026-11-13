@@ -1,4 +1,8 @@
-34-100-249-2.sslip.io {
+:80 {
+	# Machine-only endpoints (n8n calls the backend directly on the Docker network); never public.
+	handle /api/internal/* {
+		respond 404
+	}
 	handle_path /api/* {
 		reverse_proxy backend:8080
 	}

@@ -46,6 +46,8 @@ services:
       SPRING_DOCKER_COMPOSE_ENABLED: "false"
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       CORS_ORIGINS: ${CORS_ORIGINS:?Set CORS_ORIGINS in .env}
+      N8N_ALERT_WEBHOOK_URL: ${N8N_ALERT_WEBHOOK_URL:-}
+      N8N_SERVICE_TOKEN: ${N8N_SERVICE_TOKEN:-}
 
   ai-service:
     build: ./ai-service
@@ -109,6 +111,11 @@ services:
       - "127.0.0.1:5678:5678"
     volumes:
       - n8n_data:/home/node/.n8n
+    environment:
+      # Used by the workflows in ./n8n/workflows via {{ $env.* }}
+      FINMIND_BACKEND_URL: http://backend:8080
+      N8N_SERVICE_TOKEN: ${N8N_SERVICE_TOKEN:-}
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
     depends_on:
       - backend
 

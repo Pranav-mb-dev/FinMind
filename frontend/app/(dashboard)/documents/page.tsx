@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { apiJson, apiFetch } from '@/lib/api';
+import PendingTransactionsModal from '@/components/PendingTransactionsModal';
 
 interface Document {
   id: string;
@@ -10,6 +11,8 @@ interface Document {
   status: string;
   chunksIndexed: number;
   createdAt: string;
+  pendingTransactionCount: number;
+  errorMessage?: string | null;
 }
 
 export default function DocumentsPage() {
@@ -18,6 +21,7 @@ export default function DocumentsPage() {
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  const [reviewDocId, setReviewDocId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollIntervalsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
@@ -33,6 +37,14 @@ export default function DocumentsPage() {
     }
     load();
   }, []);
+
+  async function reloadDocuments() {
+    try {
+      setDocuments(await apiJson<Document[]>('/documents'));
+    } catch (e: any) {
+      setError(e.message || 'Failed to load documents');
+    }
+  }
 
   const pollStatus = useCallback((docId: string) => {
     if (pollIntervalsRef.current.has(docId)) return;
@@ -181,7 +193,19 @@ export default function DocumentsPage() {
                 <tr key={doc.id} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="px-6 py-4 text-sm text-gray-900 font-medium">{doc.filename}</td>
                   <td className="px-6 py-4 text-sm text-gray-600 uppercase">{doc.fileType}</td>
-                  <td className="px-6 py-4">{statusBadge(doc.status)}</td>
+                  <td className="px-6 py-4">{statusBadge(doc.status)}
+                    {doc.status === 'READY' && doc.errorMessage && (
+                      <p className="mt-1 text-xs text-amber-700">{doc.errorMessage}</p>
+                    )}
+                    {doc.status === 'READY' && doc.pendingTransactionCount > 0 && (
+                      <button
+                        onClick={() => setReviewDocId(doc.id)}
+                        className="mt-2 px-3 py-1 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700"
+                      >
+                        Review {doc.pendingTransactionCount} transactions
+                      </button>
+                    )}
+                  </td>
                   <td className="px-6 py-4 text-sm text-gray-600">{doc.chunksIndexed}</td>
                   <td className="px-6 py-4 text-sm text-gray-600">
                     {new Date(doc.createdAt).toLocaleDateString()}
@@ -192,6 +216,14 @@ export default function DocumentsPage() {
           </table>
         )}
       </div>
+
+      {reviewDocId && (
+        <PendingTransactionsModal
+          documentId={reviewDocId}
+          onClose={() => setReviewDocId(null)}
+          onImported={() => { setReviewDocId(null); reloadDocuments(); }}
+        />
+      )}
     </div>
   );
 }
